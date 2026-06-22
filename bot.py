@@ -29,7 +29,7 @@ from db import (
     get_session,
     record_answer,
 )
-from models import Question, Resource, User
+from models import Answer, Question, Resource, User
 
 log = logging.getLogger("codesensei")
 
@@ -197,6 +197,25 @@ async def answer(ctx: commands.Context, question_id: int, option: str) -> None:
             return
 
         user = get_or_create_user(session, ctx.author.id, ctx.author.display_name)
+
+        # One attempt per question per user. Without this, anyone could farm
+        # unlimited aura by re-answering (or just trying A/B/C/D until correct).
+        already = (
+            session.query(Answer)
+            .filter_by(user_id=user.id, question_id=question.id)
+            .first()
+        )
+        if already is not None:
+            await ctx.send(
+                embed=utils.simple_embed(
+                    "📝 Already answered",
+                    f"You've already answered question #{question.id} "
+                    f"(you chose **{already.answer_text}**). "
+                    f"Try a new one with `{Config.PREFIX}ask`!",
+                    utils.COLOR_GOLD,
+                )
+            )
+            return
 
         # --- Easter egg: one lucky user always answers "correctly" + bonus ---
         bonus = 0
