@@ -46,6 +46,18 @@ class Config:
 
     # Logging verbosity, read as a string like "INFO" and resolved to a level.
     LOGGING_LEVEL: str = os.getenv("LOGGING_LEVEL", "INFO")
+    # Where the rotating log file is written.
+    LOG_FILE: str = os.getenv("LOG_FILE", "bot.log")
+
+    # --- Slash commands ------------------------------------------------------
+    # If GUILD_ID is set, slash commands sync INSTANTLY to that one server
+    # (ideal for development). If left blank, they sync GLOBALLY, which can take
+    # up to ~1 hour to appear but works in every server the bot joins.
+    GUILD_ID: str = os.getenv("GUILD_ID", "")
+
+    # How many seconds the A/B/C/D answer buttons stay clickable before they
+    # disable themselves and the embed reveals the correct option.
+    ANSWER_TIMEOUT: float = float(os.getenv("ANSWER_TIMEOUT", "120"))
 
     # --- Easter egg ----------------------------------------------------------
     # If you want one specific user to always get their answer auto-corrected

@@ -99,7 +99,7 @@ def question_embed(question) -> discord.Embed:
     embed.add_field(name="🇩 D", value=question.option_d, inline=False)
     embed.add_field(
         name="How to answer",
-        value=f"`{Config.PREFIX}answer {question.id} <A/B/C/D>`",
+        value="Click a button below (🅰️/🅱️/🇨/🇩). Your result is private!",
         inline=False,
     )
     embed.add_field(name="Category", value=question.category, inline=True)
@@ -241,35 +241,36 @@ def help_embed() -> discord.Embed:
     embed = discord.Embed(
         title=f"📖 {Config.BOT_NAME} — Command Guide",
         description=(
-            "Hi! I'm your friendly coding mentor. Test your knowledge, share "
-            f"resources, and earn {Config.CURRENCY_NAME} {Config.CURRENCY_EMOJI}!"
+            "Hi! I'm your friendly coding mentor. Every command works as a slash "
+            f"command (`/ask`) **or** with the `{p}` prefix (`{p}ask`). Test your "
+            f"knowledge, share resources, and earn {Config.CURRENCY_NAME} {Config.CURRENCY_EMOJI}!"
         ),
         color=COLOR_BLUE,
     )
     embed.add_field(
         name="🧠 Quiz",
         value=(
-            f"`{p}ask [category]` — get a random question\n"
-            f"`{p}answer <id> <A/B/C/D>` — answer a question\n"
-            f"`{p}addquestion title | desc | category | A | B | C | D | correct`"
+            f"`/ask [category]` — get a question with A/B/C/D **buttons** to click\n"
+            f"`/answer <id> <A/B/C/D>` — type-based fallback to answer\n"
+            f"`/addquestion title | desc | category | A | B | C | D | correct`"
         ),
         inline=False,
     )
     embed.add_field(
         name="📚 Resources",
         value=(
-            f"`{p}resource [category]` — get a random resource\n"
-            f"`{p}addresource title | url | category | [description]`"
+            f"`/resource [category]` — get a random resource\n"
+            f"`/addresource title | url | category | [description]`"
         ),
         inline=False,
     )
     embed.add_field(
         name="📊 Progress",
         value=(
-            f"`{p}profile [@user]` — view a full profile\n"
-            f"`{p}{Config.CURRENCY_NAME} [@user]` — quick {Config.CURRENCY_NAME} readout\n"
-            f"`{p}leaderboard` — top 10 learners\n"
-            f"`{p}categories` — list all categories"
+            f"`/profile [@user]` — view a full profile\n"
+            f"`/{Config.CURRENCY_NAME} [@user]` — quick {Config.CURRENCY_NAME} readout\n"
+            f"`/leaderboard` — top 10 learners\n"
+            f"`/categories` — list all categories"
         ),
         inline=False,
     )
