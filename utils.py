@@ -250,27 +250,27 @@ def help_embed() -> discord.Embed:
     embed.add_field(
         name="🧠 Quiz",
         value=(
-            f"`/ask [category]` — get a question with A/B/C/D **buttons** to click\n"
-            f"`/answer <id> <A/B/C/D>` — type-based fallback to answer\n"
-            f"`/addquestion title | desc | category | A | B | C | D | correct`"
+            "`/ask [category]` — get a question with A/B/C/D **buttons** to click\n"
+            "`/answer <id> <A/B/C/D>` — type-based fallback to answer\n"
+            "`/addquestion title | desc | category | A | B | C | D | correct`"
         ),
         inline=False,
     )
     embed.add_field(
         name="📚 Resources",
         value=(
-            f"`/resource [category]` — get a random resource\n"
-            f"`/addresource title | url | category | [description]`"
+            "`/resource [category]` — get a random resource\n"
+            "`/addresource title | url | category | [description]`"
         ),
         inline=False,
     )
     embed.add_field(
         name="📊 Progress",
         value=(
-            f"`/profile [@user]` — view a full profile\n"
-            f"`/{Config.CURRENCY_NAME} [@user]` — quick {Config.CURRENCY_NAME} readout\n"
-            f"`/leaderboard` — top 10 learners\n"
-            f"`/categories` — list all categories"
+            "`/profile [@user]` — view a full profile\n"
+            f"`/{Config.CURRENCY_NAME.lower()} [@user]` — quick {Config.CURRENCY_NAME} readout\n"
+            "`/leaderboard` — top 10 learners\n"
+            "`/categories` — list all categories"
         ),
         inline=False,
     )

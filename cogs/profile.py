@@ -45,8 +45,11 @@ class Profile(commands.Cog):
             session.close()
 
     # Command name comes from CURRENCY_NAME so it stays in sync with the theme.
+    # Slash-command names MUST be lowercase, so we lower() it — otherwise a
+    # customized currency like "XP" or "Rep" would crash the bot on startup.
+    # (Prefix invocation is case-insensitive anyway.)
     @commands.hybrid_command(
-        name=Config.CURRENCY_NAME,
+        name=Config.CURRENCY_NAME.lower(),
         aliases=["points"],
         description=f"Quick readout of someone's {Config.CURRENCY_NAME}.",
     )

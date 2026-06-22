@@ -72,7 +72,7 @@ class Events(commands.Cog):
             await self._reply(
                 ctx,
                 "🤔 Unknown command",
-                f"I don't know that one. Try `/help` to see what I can do!",
+                "I don't know that one. Try `/help` to see what I can do!",
             )
         elif isinstance(error, commands.MissingRequiredArgument):
             await self._reply(
