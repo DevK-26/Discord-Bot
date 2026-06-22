@@ -1,0 +1,23 @@
+# Secrets — never commit your real token
+.env
+
+# SQLite databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# OS / editor cruft
+.DS_Store
+.idea/
+.vscode/
