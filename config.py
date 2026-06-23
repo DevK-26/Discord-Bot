@@ -22,6 +22,21 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def _parse_level_roles(raw: str) -> dict[int, str]:
+    """Parse 'LEVEL_ROLES' like '1:Novice,5:Adept' into {1: 'Novice', 5: 'Adept'}."""
+    mapping: dict[int, str] = {}
+    for pair in raw.split(","):
+        pair = pair.strip()
+        if not pair or ":" not in pair:
+            continue
+        lvl, _, name = pair.partition(":")
+        try:
+            mapping[int(lvl.strip())] = name.strip()
+        except ValueError:
+            continue
+    return mapping
+
+
 class Config:
     """Central, read-only configuration for the whole bot."""
 
@@ -58,6 +73,31 @@ class Config:
     # How many seconds the A/B/C/D answer buttons stay clickable before they
     # disable themselves and the embed reveals the correct option.
     ANSWER_TIMEOUT: float = float(os.getenv("ANSWER_TIMEOUT", "120"))
+
+    # --- Tier 2: scoring, levels, streaks, cooldowns -------------------------
+
+    # Point multiplier per difficulty. Each is overridable via its own env var.
+    DIFFICULTY_MULTIPLIERS: dict[str, float] = {
+        "easy": float(os.getenv("DIFF_EASY", "1.0")),
+        "medium": float(os.getenv("DIFF_MEDIUM", "1.5")),
+        "hard": float(os.getenv("DIFF_HARD", "2.0")),
+    }
+
+    # Levels: level = floor(sqrt(points / LEVEL_POINTS_BASE)).
+    LEVEL_POINTS_BASE: int = int(os.getenv("LEVEL_POINTS_BASE", "100"))
+
+    # Daily streak bonus: +N points per consecutive day, capped.
+    STREAK_BONUS_PER_DAY: int = int(os.getenv("STREAK_BONUS_PER_DAY", "5"))
+    STREAK_BONUS_CAP: int = int(os.getenv("STREAK_BONUS_CAP", "50"))
+
+    # Per-user cooldown (seconds) on /ask to discourage point-spamming.
+    ASK_COOLDOWN_SECONDS: float = float(os.getenv("ASK_COOLDOWN_SECONDS", "10"))
+
+    # Optional level -> role auto-assignment. Format in .env:
+    #   LEVEL_ROLES=1:Novice,3:Apprentice,5:Adept,10:Sensei
+    # The bot creates/assigns the role for the highest level a member has reached
+    # (requires the Manage Roles permission; silently skipped if missing/blank).
+    LEVEL_ROLES: dict[int, str] = _parse_level_roles(os.getenv("LEVEL_ROLES", ""))
 
     # --- Easter egg ----------------------------------------------------------
     # If you want one specific user to always get their answer auto-corrected

@@ -13,6 +13,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+import achievements as ach
 import utils
 from config import Config
 from db import get_or_create_user, get_session
@@ -37,9 +38,12 @@ class Profile(commands.Cog):
         try:
             user = get_or_create_user(session, target.id, target.display_name)
             session.commit()
+            earned = ach.earned_for(session, user)
             avatar_url = target.display_avatar.url if target.display_avatar else None
             await ctx.send(
-                embed=utils.profile_embed(user, target.display_name, avatar_url)
+                embed=utils.profile_embed(
+                    user, target.display_name, avatar_url, earned
+                )
             )
         finally:
             session.close()

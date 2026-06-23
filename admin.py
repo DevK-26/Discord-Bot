@@ -15,6 +15,7 @@ import sys
 
 from sqlalchemy import func
 
+import achievements as ach
 from config import Config
 from db import Base, engine, init_db, session_scope
 from models import Answer, Question, Resource, User
@@ -22,7 +23,10 @@ from models import Answer, Question, Resource, User
 
 def cmd_init() -> None:
     init_db()
+    with session_scope() as session:
+        created = ach.sync_achievements(session)
     print("✅ Database initialized (tables created if missing).")
+    print(f"🏆 Achievements synced ({created} new, {len(ach.CATALOG)} total).")
 
 
 def cmd_stats() -> None:

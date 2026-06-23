@@ -9,7 +9,19 @@ discover hand-picked developer resources — all wrapped in clean, colorful embe
 
 ---
 
-## 🆕 What's new (Tier 1)
+## 🆕 What's new (Tier 2 — engagement loop)
+
+- 🗓️ **Daily challenge + streaks** — `/daily` gives one fresh question per UTC day; answering builds a 🔥 streak with a scaling, capped bonus (`+5`/day up to `+50`).
+- ⚖️ **Difficulty-scaled scoring** — easy ×1, medium ×1.5, hard ×2 (configurable). Shown live in the question's reward field.
+- 🎚️ **Levels + progress bar** — `level = floor(sqrt(points/100))`, with a progress bar and optional **auto-assigned Discord roles** at configurable level thresholds (`LEVEL_ROLES`).
+- 🏆 **Achievements / badges** — 10 milestone badges (first correct, 10/50/100 correct, streaks, levels, contributor). Unlocks are announced in-channel and listed on your profile.
+- ⏳ **Cooldowns / anti-farm** — per-user cooldown on `/ask`, one scored attempt per question, and only the first `/daily` each day pays a streak bonus.
+
+> **Upgrading?** Run `python migrate.py` once — it adds the streak columns and achievement tables to your existing `app.db` without touching your data.
+
+---
+
+## 🆕 What's new (Tier 1 — slash & buttons)
 
 - ⚡ **Slash commands** — every command now works as `/ask` **and** the legacy `!ask` (hybrid). Includes **category autocomplete**.
 - 🔘 **Interactive answer buttons** — questions come with clickable **A / B / C / D** buttons; your result is shown **privately (ephemeral)** so nobody sees if you were right. Buttons disable on a timer and reveal the answer.
@@ -105,7 +117,8 @@ Every command works as a **slash command** (`/ask`) *or* with the `!` prefix (`!
 | Command | Args | Behavior |
 |---|---|---|
 | `/help` | – | Embed listing all commands by section. |
-| `/ask` | `[category]` | Random active question with **A/B/C/D buttons** (category autocomplete). |
+| `/ask` | `[category]` | Random active question with **A/B/C/D buttons** (category autocomplete; per-user cooldown). |
+| `/daily` | – | Your once-a-day challenge — builds a 🔥 streak and pays a scaling bonus. |
 | `/answer` | `<id> <A/B/C/D>` | Text fallback for the buttons; ephemeral result. |
 | `/addquestion` | `title \| desc \| category \| A \| B \| C \| D \| correct` | Add a question (8 `\|`-separated fields). |
 | `/resource` | `[category]` | Random resource, optionally by category (autocomplete). |
@@ -136,16 +149,20 @@ shown only to you. After the timeout the buttons lock and the embed reveals the 
 codesensei/
 ├── main.py          # entry point
 ├── bot.py           # Bot subclass, logging, cog loading, slash sync
-├── config.py        # env-backed Config (token, DB_URL, GUILD_ID, timeouts, ...)
+├── config.py        # env-backed Config (token, DB_URL, scoring, streaks, roles, ...)
 ├── db.py            # engine, sessions, helper fns
-├── models.py        # SQLAlchemy models
+├── models.py        # SQLAlchemy models (User, Question, Answer, Resource, Achievement, ...)
+├── scoring.py       # pure scoring math: difficulty, levels, streaks (unit-tested)
+├── services.py      # process_answer — the single answer/scoring path
+├── achievements.py  # badge catalog + granting logic
+├── roles.py         # optional level → Discord role auto-assignment
 ├── utils.py         # embed builders + quiz helpers
 ├── views.py         # AnswerView (the A/B/C/D buttons)
-├── seed.py          # sample questions + resources
+├── seed.py          # sample questions + resources + achievement sync
 ├── migrate.py       # non-destructive DB migrations
 ├── admin.py         # offline CLI (init/stats/reset)
 ├── cogs/            # quiz, resources, profile, admin, events
-└── tests/           # pytest suite for pure logic
+└── tests/           # pytest suite for pure logic (scoring, streaks, levels)
 ```
 
 ---
@@ -154,13 +171,19 @@ codesensei/
 
 | Model | Key fields |
 |---|---|
-| **User** | `discord_id` (unique), `username`, `points`, `correct_answers`, `total_answers`, `created_at` → relationship to **answers** |
-| **Question** | `title`, `description`, `category`, `difficulty`, `option_a/b/c/d`, `correct_option` (A/B/C/D), `points`, `is_active`, `asked_by`, `created_at` → **answers** |
+| **User** | `discord_id` (unique), `username`, `points`, `correct_answers`, `total_answers`, `current_streak`, `longest_streak`, `last_daily_date`, `created_at` → **answers**, **achievements** |
+| **Question** | `title`, `description`, `category`, `difficulty`, `option_a/b/c/d`, `correct_option` (A/B/C/D), `points` (flat base), `is_active`, `asked_by`, `created_at` → **answers** |
 | **Answer** | `question_id` (FK), `user_id` (FK), `answer_text`, `is_correct`, `points_awarded`, `created_at` |
 | **Resource** | `title`, `url`, `category`, `description?`, `tags?` (CSV), `added_by`, `upvotes`, `created_at` |
+| **Achievement** | `key` (unique), `name`, `emoji`, `description` → **holders** |
+| **UserAchievement** | `user_id` (FK), `achievement_id` (FK), `earned_at` — unique per pair |
 
-- On a correct answer: `points` and `correct_answers` increment; `total_answers` always increments.
-- **Accuracy** = `correct / total × 100` (guarded against divide-by-zero).
+- **Scoring** (in `services.process_answer`): award = `points × difficulty_multiplier` on a correct
+  answer, plus an easter-egg bonus and/or daily streak bonus. `points` and `correct_answers`
+  increment on correct; `total_answers` always increments.
+- **Level** = `floor(sqrt(points / LEVEL_POINTS_BASE))`. **Accuracy** = `correct / total × 100`
+  (guarded against divide-by-zero).
+- **Streak** advances on the first `/daily` completion each UTC day; a gap resets it to 1.
 
 ---
 

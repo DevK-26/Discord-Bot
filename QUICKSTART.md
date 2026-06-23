@@ -27,10 +27,14 @@ python main.py                # 🚀 go!
 ```text
 /help
 /ask            → then click an A/B/C/D button
+/daily          → your once-a-day streak challenge
 /resource
-/profile
+/profile        → level, streak 🔥, accuracy & badges 🏆
 /leaderboard
 ```
 (Each also works with the `!` prefix, e.g. `!ask`.)
+
+Harder questions pay more (easy ×1, medium ×1.5, hard ×2), daily streaks add bonus points, and you
+unlock badges as you go. Optional: set `LEVEL_ROLES=1:Novice,5:Adept` in `.env` to auto-grant roles.
 
 That's it — you're live! 🔮  For full details see **README.md**.

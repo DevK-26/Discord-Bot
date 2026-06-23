@@ -1,11 +1,9 @@
 """
 cogs/quiz.py
 ============
-The quiz cog: asking questions (with clickable answer buttons), a type-based
-answer fallback, adding questions, and listing categories.
-
-All commands are **hybrid** — they work as slash commands (`/ask`) and with the
-legacy `!` prefix (`!ask`), so nothing breaks for existing users.
+The quiz cog: asking questions (with clickable answer buttons), the daily
+challenge, a type-based answer fallback, adding questions, and listing
+categories. All commands are **hybrid** (slash `/ask` + legacy `!ask`).
 """
 
 from __future__ import annotations
@@ -15,12 +13,14 @@ import logging
 import discord
 from discord import app_commands
 from discord.ext import commands
+from sqlalchemy import func
 
+import services
 import utils
 from config import Config
-from db import add_question, get_or_create_user, get_session, record_answer
+from db import add_question, get_or_create_user, get_session
 from models import Answer, Question
-from views import AnswerView
+from views import AnswerView, announce_extras, _is_easter_egg
 
 log = logging.getLogger("codesensei.quiz")
 
@@ -35,7 +35,6 @@ async def question_category_autocomplete(
     finally:
         session.close()
     current = (current or "").lower()
-    # Discord allows at most 25 autocomplete choices.
     return [
         app_commands.Choice(name=cat, value=cat)
         for cat in cats
@@ -52,6 +51,7 @@ class Quiz(commands.Cog):
     )
     @app_commands.describe(category="Optional category to filter by")
     @app_commands.autocomplete(category=question_category_autocomplete)
+    @commands.cooldown(1, Config.ASK_COOLDOWN_SECONDS, commands.BucketType.user)
     async def ask(self, ctx: commands.Context, category: str | None = None) -> None:
         session = get_session()
         try:
@@ -68,11 +68,55 @@ class Quiz(commands.Cog):
                     ephemeral=True,
                 )
                 return
-
-            # Post the question publicly with clickable A/B/C/D buttons.
             view = AnswerView(question)
             message = await ctx.send(embed=utils.question_embed(question), view=view)
-            view.message = message  # let the view edit it on timeout
+            view.message = message
+        finally:
+            session.close()
+
+    @commands.hybrid_command(
+        name="daily", description="Your once-a-day challenge — keep your streak alive!"
+    )
+    async def daily(self, ctx: commands.Context) -> None:
+        session = get_session()
+        try:
+            user = get_or_create_user(session, ctx.author.id, ctx.author.display_name)
+            session.commit()
+
+            from datetime import datetime, timezone
+
+            today = datetime.now(timezone.utc).date()
+            if user.last_daily_date == today:
+                await ctx.send(
+                    embed=utils.daily_done_embed(user.current_streak or 0), ephemeral=True
+                )
+                return
+
+            # Pick a random active question the user hasn't answered yet.
+            answered = session.query(Answer.question_id).filter_by(user_id=user.id)
+            question = (
+                session.query(Question)
+                .filter(Question.is_active.is_(True), ~Question.id.in_(answered))
+                .order_by(func.random())
+                .first()
+            )
+            if question is None:
+                await ctx.send(
+                    embed=utils.simple_embed(
+                        "🎉 You've answered them all!",
+                        "There are no new questions left for your daily right now. "
+                        "Add more with `/addquestion` or check back later!",
+                        utils.COLOR_GREEN,
+                    ),
+                    ephemeral=True,
+                )
+                return
+
+            view = AnswerView(question, is_daily=True)
+            message = await ctx.send(
+                embed=utils.question_embed(question, is_daily=True), view=view
+            )
+            view.message = message
         finally:
             session.close()
 
@@ -110,47 +154,31 @@ class Quiz(commands.Cog):
                 return
 
             user = get_or_create_user(session, ctx.author.id, ctx.author.display_name)
-
-            # One scored attempt per user per question.
-            existing = (
-                session.query(Answer)
-                .filter_by(user_id=user.id, question_id=question.id)
-                .first()
+            outcome = services.process_answer(
+                session,
+                user=user,
+                question=question,
+                chosen_letter=option,
+                is_easter_egg=_is_easter_egg(ctx.author.id),
             )
-            if existing is not None:
+            if outcome.status == "already":
                 await ctx.send(
                     embed=utils.simple_embed(
                         "📝 Already answered",
                         f"You already answered #{question.id} (you chose "
-                        f"**{existing.answer_text}**). Try a new one with `/ask`!",
+                        f"**{outcome.existing_letter}**). Try a new one with `/ask`!",
                         utils.COLOR_GOLD,
                     ),
                     ephemeral=True,
                 )
                 return
 
-            # Easter egg: one lucky user is auto-corrected + bonus.
-            bonus = 0
-            if Config.EASTER_EGG_USER_ID and str(ctx.author.id) == Config.EASTER_EGG_USER_ID:
-                option = question.correct_option
-                bonus = Config.EASTER_EGG_BONUS
-
-            _, is_correct = record_answer(
-                session, user=user, question=question, chosen_letter=option
-            )
-            if bonus:
-                user.points += bonus
             session.commit()
-
-            if is_correct:
-                await ctx.send(
-                    embed=utils.correct_answer_embed(question, question.points, bonus),
-                    ephemeral=True,
-                )
-            else:
-                await ctx.send(
-                    embed=utils.wrong_answer_embed(question, option), ephemeral=True
-                )
+            await ctx.send(
+                embed=utils.answer_feedback_embed(question, option, outcome),
+                ephemeral=True,
+            )
+            await announce_extras(ctx.channel, ctx.author, ctx.guild, outcome)
         finally:
             session.close()
 
@@ -202,6 +230,12 @@ class Quiz(commands.Cog):
                 correct_option=correct,
                 asked_by=str(ctx.author.id),
             )
+            # Adding content can unlock the "Contributor" badge.
+            user = get_or_create_user(session, ctx.author.id, ctx.author.display_name)
+            session.flush()
+            import achievements as ach
+
+            new_badges = ach.evaluate_and_grant(session, user)
             session.commit()
             await ctx.send(
                 embed=utils.simple_embed(
@@ -210,6 +244,13 @@ class Quiz(commands.Cog):
                     utils.COLOR_GREEN,
                 )
             )
+            if new_badges:
+                await announce_extras(
+                    ctx.channel,
+                    ctx.author,
+                    ctx.guild,
+                    services.AnswerOutcome(status="ok", new_achievements=new_badges),
+                )
         finally:
             session.close()
 
@@ -217,7 +258,7 @@ class Quiz(commands.Cog):
         name="categories", description="List all quiz and resource categories."
     )
     async def categories(self, ctx: commands.Context) -> None:
-        from models import Resource  # local import keeps the resource cog independent
+        from models import Resource
 
         session = get_session()
         try:

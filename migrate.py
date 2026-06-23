@@ -21,7 +21,8 @@ from __future__ import annotations
 
 from sqlalchemy import inspect, text
 
-from db import engine, init_db
+import achievements as ach
+from db import engine, init_db, session_scope
 
 
 def _columns(table: str) -> set[str]:
@@ -46,29 +47,38 @@ def add_column_if_missing(table: str, column: str, ddl_type: str) -> bool:
 
 
 # Each migration is (table, column, ddl_type). Add new rows in future tiers;
-# already-applied ones are skipped automatically. Example for Tier 2:
-#   ("users", "current_streak", "INTEGER DEFAULT 0"),
-MIGRATIONS: list[tuple[str, str, str]] = []
+# already-applied ones are skipped automatically.
+MIGRATIONS: list[tuple[str, str, str]] = [
+    # Tier 2: daily-challenge streak tracking on the users table.
+    ("users", "current_streak", "INTEGER DEFAULT 0"),
+    ("users", "longest_streak", "INTEGER DEFAULT 0"),
+    ("users", "last_daily_date", "DATE"),
+]
 
 
 def main() -> None:
-    # 1. Make sure all tables defined in models.py exist.
+    # 1. Make sure all tables defined in models.py exist (creates the new
+    #    achievements / user_achievements tables on existing databases).
     init_db()
     print("✅ Tables ensured (created any that were missing).")
 
-    # 2. Apply additive column migrations.
-    if not MIGRATIONS:
+    # 2. Apply additive column migrations to pre-existing tables.
+    if MIGRATIONS:
+        applied = 0
+        for table, column, ddl in MIGRATIONS:
+            if add_column_if_missing(table, column, ddl):
+                print(f"   + added {table}.{column}")
+                applied += 1
+            else:
+                print(f"   = {table}.{column} already present, skipped")
+        print(f"🧩 Columns: {applied} added.")
+    else:
         print("ℹ️  No column migrations to apply for this version.")
-        return
 
-    applied = 0
-    for table, column, ddl in MIGRATIONS:
-        if add_column_if_missing(table, column, ddl):
-            print(f"   + added {table}.{column}")
-            applied += 1
-        else:
-            print(f"   = {table}.{column} already present, skipped")
-    print(f"🧩 Migration complete — {applied} column(s) added.")
+    # 3. Sync the achievement catalog into the DB.
+    with session_scope() as session:
+        created = ach.sync_achievements(session)
+    print(f"🏆 Achievements synced ({created} new, {len(ach.CATALOG)} total).")
 
 
 if __name__ == "__main__":

@@ -15,18 +15,21 @@ which is the modern, type-hint-friendly way to declare models.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy import (
     Boolean,
+    Date,
     DateTime,
     ForeignKey,
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+import scoring
 from db import Base
 
 
@@ -52,10 +55,20 @@ class User(Base):
     correct_answers: Mapped[int] = mapped_column(Integer, default=0)
     total_answers: Mapped[int] = mapped_column(Integer, default=0)
 
+    # Tier 2: daily-challenge streaks. Nullable/defaulted so existing rows
+    # migrate cleanly (see migrate.py).
+    current_streak: Mapped[int] = mapped_column(Integer, default=0)
+    longest_streak: Mapped[int] = mapped_column(Integer, default=0)
+    last_daily_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
     # One user has many answers. back_populates wires up the two-way link.
     answers: Mapped[list[Answer]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    # Tier 2: earned achievements (badges).
+    achievements: Mapped[list[UserAchievement]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
 
@@ -65,6 +78,11 @@ class User(Base):
         if self.total_answers <= 0:  # guard against divide-by-zero
             return 0.0
         return (self.correct_answers / self.total_answers) * 100
+
+    @property
+    def level(self) -> int:
+        """Current level derived from total points."""
+        return scoring.level_for_points(self.points or 0)
 
 
 class Question(Base):
@@ -138,3 +156,37 @@ class Resource(Base):
     added_by: Mapped[str] = mapped_column(String(32), default="system")
     upvotes: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+class Achievement(Base):
+    """A badge that can be earned (the catalog lives in achievements.py)."""
+
+    __tablename__ = "achievements"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # Stable identifier used in code, e.g. "first_correct".
+    key: Mapped[str] = mapped_column(String(50), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(100))
+    emoji: Mapped[str] = mapped_column(String(16), default="🏆")
+    description: Mapped[str] = mapped_column(String(255))
+
+    holders: Mapped[list[UserAchievement]] = relationship(
+        back_populates="achievement", cascade="all, delete-orphan"
+    )
+
+
+class UserAchievement(Base):
+    """Join row: user X earned achievement Y at some time."""
+
+    __tablename__ = "user_achievements"
+    __table_args__ = (
+        UniqueConstraint("user_id", "achievement_id", name="uq_user_achievement"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    achievement_id: Mapped[int] = mapped_column(ForeignKey("achievements.id"))
+    earned_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+    user: Mapped[User] = relationship(back_populates="achievements")
+    achievement: Mapped[Achievement] = relationship(back_populates="holders")

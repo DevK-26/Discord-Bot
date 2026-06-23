@@ -14,9 +14,12 @@ from discord import app_commands
 from discord.ext import commands
 from sqlalchemy import func
 
+import achievements as ach
+import services
 import utils
-from db import add_resource, get_session
+from db import add_resource, get_or_create_user, get_session
 from models import Resource
+from views import announce_extras
 
 log = logging.getLogger("codesensei.resources")
 
@@ -106,6 +109,10 @@ class Resources(commands.Cog):
                 description=description,
                 added_by=str(ctx.author.id),
             )
+            # Adding resources can unlock the "Resourceful" badge.
+            user = get_or_create_user(session, ctx.author.id, ctx.author.display_name)
+            session.flush()
+            new_badges = ach.evaluate_and_grant(session, user)
             session.commit()
             await ctx.send(
                 embed=utils.simple_embed(
@@ -114,6 +121,13 @@ class Resources(commands.Cog):
                     utils.COLOR_GREEN,
                 )
             )
+            if new_badges:
+                await announce_extras(
+                    ctx.channel,
+                    ctx.author,
+                    ctx.guild,
+                    services.AnswerOutcome(status="ok", new_achievements=new_badges),
+                )
         finally:
             session.close()
 

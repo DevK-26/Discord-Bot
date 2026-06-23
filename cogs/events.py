@@ -105,12 +105,27 @@ class Events(commands.Cog):
     async def on_app_command_error(
         self, interaction: discord.Interaction, error: app_commands.AppCommandError
     ) -> None:
-        """Friendly handling of *slash* command errors (always ephemeral)."""
-        error = getattr(error, "original", error)
+        """Friendly handling of *slash* command errors (always ephemeral).
 
-        if isinstance(error, app_commands.CommandOnCooldown):
+        Hybrid commands can surface either app_commands.* or commands.* errors
+        (e.g. cooldowns), so we unwrap and check both families.
+        """
+        # Unwrap nested wrappers (HybridCommandError / CommandInvokeError).
+        while hasattr(error, "original"):
+            error = error.original
+
+        if isinstance(error, (app_commands.CommandOnCooldown, commands.CommandOnCooldown)):
             title, msg = "⏳ Slow down a sec", f"Try again in {error.retry_after:.1f}s."
-        elif isinstance(error, (app_commands.MissingPermissions, app_commands.CheckFailure)):
+        elif isinstance(
+            error,
+            (
+                app_commands.MissingPermissions,
+                app_commands.CheckFailure,
+                commands.MissingPermissions,
+                commands.NotOwner,
+                commands.CheckFailure,
+            ),
+        ):
             title, msg = "🔒 No permission", "You can't use that command."
         else:
             log.exception("Unhandled app-command error", exc_info=error)
