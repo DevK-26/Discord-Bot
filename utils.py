@@ -22,7 +22,15 @@ import discord
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+import scoring
 from config import Config
+
+
+def progress_bar(fraction: float, slots: int = 10) -> str:
+    """Render a text progress bar like ▰▰▰▰▱▱▱▱▱▱ for a 0..1 fraction."""
+    fraction = max(0.0, min(1.0, fraction))
+    filled = round(fraction * slots)
+    return "▰" * filled + "▱" * (slots - filled)
 
 # --- Color palette ----------------------------------------------------------
 COLOR_BLUE = discord.Color.blue()
@@ -86,10 +94,15 @@ def _timestamp() -> datetime:
 # ---------------------------------------------------------------------------
 
 
-def question_embed(question) -> discord.Embed:
+def question_embed(question, *, is_daily: bool = False) -> discord.Embed:
     """Blue embed presenting a question and its four options."""
+    title = (
+        f"🗓️ Daily Challenge #{question.id}: {question.title}"
+        if is_daily
+        else f"🧠 Quiz #{question.id}: {question.title}"
+    )
     embed = discord.Embed(
-        title=f"🧠 Quiz #{question.id}: {question.title}",
+        title=title,
         description=question.description or "Pick the best answer below.",
         color=COLOR_BLUE,
     )
@@ -104,51 +117,94 @@ def question_embed(question) -> discord.Embed:
     )
     embed.add_field(name="Category", value=question.category, inline=True)
     embed.add_field(name="Difficulty", value=question.difficulty.title(), inline=True)
+    reward = scoring.points_for(question.points, question.difficulty)
     embed.add_field(
         name="Reward",
-        value=f"{question.points} {Config.CURRENCY_NAME} {Config.CURRENCY_EMOJI}",
+        value=f"{reward} {Config.CURRENCY_NAME} {Config.CURRENCY_EMOJI}",
         inline=True,
     )
     embed.set_footer(text=FOOTER)
     return embed
 
 
-def correct_answer_embed(question, points_awarded: int, bonus: int = 0) -> discord.Embed:
-    """Green embed celebrating a correct answer."""
-    embed = discord.Embed(
-        title="✅ Correct! Nicely done.",
-        description=f"**{question.title}** — option **{question.correct_option}** was right!",
-        color=COLOR_GREEN,
-    )
-    total = points_awarded + bonus
-    value = f"+{points_awarded} {Config.CURRENCY_NAME} {Config.CURRENCY_EMOJI}"
-    if bonus:
-        value += f"  (+{bonus} bonus! ✨)"
-    embed.add_field(name="Reward", value=value, inline=False)
-    embed.add_field(name="Total this answer", value=str(total), inline=False)
+def answer_feedback_embed(question, chosen_letter: str, outcome) -> discord.Embed:
+    """Ephemeral embed shown after a user answers (correct or wrong).
+
+    `outcome` is a services.AnswerOutcome carrying the points breakdown,
+    streak, and level-up info.
+    """
+    if outcome.is_correct:
+        embed = discord.Embed(
+            title="✅ Correct! Nicely done.",
+            description=f"**{question.title}** — option **{question.correct_option}** was right!",
+            color=COLOR_GREEN,
+        )
+        # Points breakdown.
+        lines = [f"Base: **+{outcome.base_points}** {Config.CURRENCY_EMOJI}"]
+        if outcome.egg_bonus:
+            lines.append(f"Lucky bonus: **+{outcome.egg_bonus}** ✨")
+        if outcome.streak_bonus:
+            lines.append(f"Streak bonus: **+{outcome.streak_bonus}** 🔥")
+        lines.append(f"**Total this answer: +{outcome.total_awarded}**")
+        embed.add_field(name="Reward", value="\n".join(lines), inline=False)
+    else:
+        embed = discord.Embed(
+            title="❌ Not quite — but that's how we learn!",
+            description=f"You picked **{chosen_letter.upper()}** for **{question.title}**.",
+            color=COLOR_RED,
+        )
+        embed.add_field(
+            name="Correct answer",
+            value=f"**{question.correct_option}** — {question.option_text(question.correct_option)}",
+            inline=False,
+        )
+
+    if outcome.counted_daily:
+        embed.add_field(
+            name="Daily streak", value=f"🔥 {outcome.current_streak} day(s)", inline=True
+        )
+    if outcome.leveled_up:
+        embed.add_field(
+            name="Level up!", value=f"🎉 You reached **level {outcome.new_level}**!", inline=True
+        )
     embed.set_footer(text=FOOTER)
     return embed
 
 
-def wrong_answer_embed(question, chosen_letter: str) -> discord.Embed:
-    """Red embed for a wrong answer that reveals the correct option."""
+def levelup_embed(display_name: str, level: int, role_name: str | None = None) -> discord.Embed:
+    """Public celebration when someone reaches a new level."""
     embed = discord.Embed(
-        title="❌ Not quite — but that's how we learn!",
-        description=f"You picked **{chosen_letter.upper()}** for **{question.title}**.",
-        color=COLOR_RED,
+        title="🎉 Level Up!",
+        description=f"**{display_name}** just reached **level {level}**! 🚀",
+        color=COLOR_PURPLE,
     )
-    embed.add_field(
-        name="Correct answer",
-        value=f"**{question.correct_option}** — {question.option_text(question.correct_option)}",
-        inline=False,
-    )
-    embed.add_field(
-        name="Keep going",
-        value=f"Try another with `{Config.PREFIX}ask`. You've got this! 💪",
-        inline=False,
-    )
+    if role_name:
+        embed.add_field(name="New role", value=f"🏷️ **{role_name}**", inline=False)
     embed.set_footer(text=FOOTER)
     return embed
+
+
+def achievements_unlocked_embed(display_name: str, achievements) -> discord.Embed:
+    """Public announcement listing newly-unlocked badges."""
+    embed = discord.Embed(
+        title="🏆 Achievement Unlocked!",
+        description=f"Congrats, **{display_name}**!",
+        color=COLOR_GOLD,
+    )
+    for a in achievements:
+        embed.add_field(name=f"{a.emoji} {a.name}", value=a.description, inline=False)
+    embed.set_footer(text=FOOTER)
+    return embed
+
+
+def daily_done_embed(current_streak: int) -> discord.Embed:
+    """Shown when a user has already completed today's daily."""
+    return simple_embed(
+        "🗓️ Daily already done",
+        f"You've completed today's challenge! 🔥 Current streak: **{current_streak}** day(s).\n"
+        "Come back tomorrow (UTC) to keep it alive!",
+        COLOR_BLUE,
+    )
 
 
 def resource_embed(resource) -> discord.Embed:
@@ -168,8 +224,10 @@ def resource_embed(resource) -> discord.Embed:
     return embed
 
 
-def profile_embed(user, display_name: str, avatar_url: str | None) -> discord.Embed:
-    """Gold embed showing a user's stats with their avatar as a thumbnail."""
+def profile_embed(
+    user, display_name: str, avatar_url: str | None, achievements=None
+) -> discord.Embed:
+    """Gold embed showing a user's stats, level, streak, and badges."""
     embed = discord.Embed(
         title=f"🪪 {display_name}'s Profile",
         description="Here's how your training is going!",
@@ -177,14 +235,45 @@ def profile_embed(user, display_name: str, avatar_url: str | None) -> discord.Em
     )
     if avatar_url:
         embed.set_thumbnail(url=avatar_url)
+
     embed.add_field(
         name=f"{Config.CURRENCY_NAME.title()} {Config.CURRENCY_EMOJI}",
         value=str(user.points),
         inline=True,
     )
+    embed.add_field(name="Level", value=f"🎚️ {user.level}", inline=True)
+    embed.add_field(
+        name="Streak",
+        value=f"🔥 {user.current_streak or 0} (best {user.longest_streak or 0})",
+        inline=True,
+    )
     embed.add_field(name="Correct", value=str(user.correct_answers), inline=True)
     embed.add_field(name="Answered", value=str(user.total_answers), inline=True)
     embed.add_field(name="Accuracy", value=f"{user.accuracy:.1f}%", inline=True)
+
+    # Progress bar toward the next level.
+    into, span, next_pts = scoring.level_progress(user.points or 0)
+    bar = progress_bar(into / span if span else 0.0)
+    embed.add_field(
+        name=f"Progress to level {user.level + 1}",
+        value=f"{bar}  {into}/{span} ({next_pts} {Config.CURRENCY_NAME} total)",
+        inline=False,
+    )
+
+    if achievements:
+        badges = " ".join(f"{a.emoji}" for a in achievements)
+        names = ", ".join(a.name for a in achievements)
+        embed.add_field(
+            name=f"🏆 Badges ({len(achievements)})",
+            value=f"{badges}\n{names}",
+            inline=False,
+        )
+    else:
+        embed.add_field(
+            name="🏆 Badges (0)",
+            value="None yet — answer questions and build streaks to earn some!",
+            inline=False,
+        )
     embed.set_footer(text=FOOTER)
     return embed
 
@@ -251,6 +340,7 @@ def help_embed() -> discord.Embed:
         name="🧠 Quiz",
         value=(
             "`/ask [category]` — get a question with A/B/C/D **buttons** to click\n"
+            "`/daily` — your once-a-day challenge (builds a 🔥 streak + bonus)\n"
             "`/answer <id> <A/B/C/D>` — type-based fallback to answer\n"
             "`/addquestion title | desc | category | A | B | C | D | correct`"
         ),
@@ -267,10 +357,19 @@ def help_embed() -> discord.Embed:
     embed.add_field(
         name="📊 Progress",
         value=(
-            "`/profile [@user]` — view a full profile\n"
+            "`/profile [@user]` — level, streak, accuracy & badges\n"
             f"`/{Config.CURRENCY_NAME.lower()} [@user]` — quick {Config.CURRENCY_NAME} readout\n"
             "`/leaderboard` — top 10 learners\n"
             "`/categories` — list all categories"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="✨ How you earn",
+        value=(
+            "Harder questions pay more (easy ×1, medium ×1.5, hard ×2). Do your "
+            "`/daily` for streak 🔥 bonuses, climb **levels** 🎚️, and unlock "
+            "**badges** 🏆 along the way!"
         ),
         inline=False,
     )

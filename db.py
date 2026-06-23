@@ -166,33 +166,6 @@ def add_resource(
     return resource
 
 
-def record_answer(session: Session, *, user, question, chosen_letter: str):
-    """Record an answer, update the user's stats, and return (answer, is_correct).
-
-    Rules:
-      - total_answers always increments.
-      - On a correct answer, points and correct_answers increment.
-      - The Answer row stores how many points were awarded for history.
-    """
-    from models import Answer
-
-    chosen_letter = chosen_letter.upper()
-    is_correct = chosen_letter == question.correct_option
-    awarded = question.points if is_correct else 0
-
-    answer = Answer(
-        question_id=question.id,
-        user_id=user.id,
-        answer_text=chosen_letter,
-        is_correct=is_correct,
-        points_awarded=awarded,
-    )
-    session.add(answer)
-
-    # Update aggregate stats on the user.
-    user.total_answers += 1
-    if is_correct:
-        user.correct_answers += 1
-        user.points += awarded
-
-    return answer, is_correct
+# Note: scoring an answer (points, streaks, achievements) lives in
+# services.process_answer — it's richer than a simple insert and is the single
+# path used by both the answer buttons and the /answer command.

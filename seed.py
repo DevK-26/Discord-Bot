@@ -11,6 +11,7 @@ It is idempotent-ish: it skips seeding if questions already exist, so running it
 twice won't create duplicates.
 """
 
+import achievements as ach
 from db import init_db, session_scope, add_question, add_resource
 from models import Question, Resource
 
@@ -50,7 +51,7 @@ SAMPLE_QUESTIONS = [
         "option_c": "O(n)",
         "option_d": "O(n^2)",
         "correct_option": "A",
-        "points": 15,
+        "points": 10,
     },
     {
         "title": "Detect a cycle in a linked list",
@@ -62,7 +63,7 @@ SAMPLE_QUESTIONS = [
         "option_c": "Binary search",
         "option_d": "Topological sort",
         "correct_option": "A",
-        "points": 15,
+        "points": 10,
     },
     {
         "title": "Sorting stability",
@@ -74,7 +75,7 @@ SAMPLE_QUESTIONS = [
         "option_c": "Quicksort",
         "option_d": "Bubble sort",
         "correct_option": "C",
-        "points": 20,
+        "points": 10,
     },
     {
         "title": "Normalize this!",
@@ -86,7 +87,7 @@ SAMPLE_QUESTIONS = [
         "option_c": "Third Normal Form (3NF)",
         "option_d": "Boyce-Codd Normal Form",
         "correct_option": "C",
-        "points": 15,
+        "points": 10,
     },
 ]
 
@@ -149,6 +150,10 @@ def main() -> None:
             for r in SAMPLE_RESOURCES:
                 add_resource(session, **r)
             print(f"✅ Added {len(SAMPLE_RESOURCES)} sample resources.")
+
+        # Make sure the achievement catalog is present in the DB.
+        created = ach.sync_achievements(session)
+        print(f"🏆 Achievements synced ({created} new, {len(ach.CATALOG)} total).")
 
     print("🌱 Seeding complete!")
 

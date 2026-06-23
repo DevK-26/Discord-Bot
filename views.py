@@ -3,11 +3,12 @@ views.py
 ========
 Interactive Discord UI components.
 
-``AnswerView`` is the Tier 1 headline feature: instead of typing
-``!answer 3 B``, members click an A/B/C/D button under the question. Each click
-is checked for the *clicking* user, scored, recorded, and answered **ephemerally**
-so nobody else sees whether they were right. When the timer runs out the buttons
-disable and the embed reveals the correct option.
+``AnswerView`` attaches A/B/C/D buttons under a question. Each click is scored
+for the *clicking* user via services.process_answer (so difficulty scaling,
+streaks, easter egg, and achievements all apply), answered **ephemerally**, and —
+when something public-worthy happens (level up, new badge) — announced in the
+channel. When the timer runs out the buttons disable and the embed reveals the
+correct option.
 """
 
 from __future__ import annotations
@@ -16,31 +17,57 @@ import logging
 
 import discord
 
+import roles
+import services
 import utils
 from config import Config
-from db import get_or_create_user, get_session, record_answer
-from models import Answer, Question
+from db import get_or_create_user, get_session
+from models import Question
 
 log = logging.getLogger("codesensei.views")
+
+
+def _is_easter_egg(user_id: int) -> bool:
+    return bool(Config.EASTER_EGG_USER_ID) and str(user_id) == Config.EASTER_EGG_USER_ID
+
+
+async def announce_extras(channel, member, guild, outcome) -> None:
+    """Post public level-up / achievement messages and assign level roles."""
+    if channel is None:
+        return
+    if outcome.leveled_up:
+        role_name = await roles.maybe_grant_level_role(member, guild, outcome.new_level)
+        try:
+            await channel.send(
+                embed=utils.levelup_embed(
+                    getattr(member, "display_name", "Someone"), outcome.new_level, role_name
+                )
+            )
+        except discord.HTTPException:
+            pass
+    if outcome.new_achievements:
+        try:
+            await channel.send(
+                embed=utils.achievements_unlocked_embed(
+                    getattr(member, "display_name", "Someone"), outcome.new_achievements
+                )
+            )
+        except discord.HTTPException:
+            pass
 
 
 class AnswerView(discord.ui.View):
     """Four buttons (A/B/C/D) attached to a posted question."""
 
-    def __init__(self, question: Question, *, timeout: float | None = None):
-        super().__init__(
-            timeout=timeout if timeout is not None else Config.ANSWER_TIMEOUT
-        )
-        # Store only plain values — the ORM object would become detached once
-        # its session closes, so we keep what we need as simple attributes.
+    def __init__(self, question: Question, *, is_daily: bool = False, timeout: float | None = None):
+        super().__init__(timeout=timeout if timeout is not None else Config.ANSWER_TIMEOUT)
         self.question_id = question.id
         self.correct_option = question.correct_option
         self.correct_text = question.option_text(question.correct_option)
-        # Set by the command after the message is sent, so on_timeout can edit it.
+        self.is_daily = is_daily
         self.message: discord.Message | None = None
 
     async def _answer(self, interaction: discord.Interaction, letter: str) -> None:
-        """Shared handler for all four buttons."""
         session = get_session()
         try:
             question = session.get(Question, self.question_id)
@@ -53,52 +80,38 @@ class AnswerView(discord.ui.View):
             user = get_or_create_user(
                 session, interaction.user.id, interaction.user.display_name
             )
-
-            # One scored attempt per user per question — no farming / brute-forcing.
-            existing = (
-                session.query(Answer)
-                .filter_by(user_id=user.id, question_id=question.id)
-                .first()
+            outcome = services.process_answer(
+                session,
+                user=user,
+                question=question,
+                chosen_letter=letter,
+                is_daily=self.is_daily,
+                is_easter_egg=_is_easter_egg(interaction.user.id),
             )
-            if existing is not None:
+
+            if outcome.status == "already":
                 await interaction.response.send_message(
                     embed=utils.simple_embed(
                         "📝 Already answered",
-                        f"You already answered this one (you chose **{existing.answer_text}**).",
+                        f"You already answered this one (you chose **{outcome.existing_letter}**).",
                         utils.COLOR_GOLD,
                     ),
                     ephemeral=True,
                 )
                 return
 
-            # --- Easter egg: one lucky user is always auto-corrected + bonus ---
-            bonus = 0
-            chosen = letter
-            if (
-                Config.EASTER_EGG_USER_ID
-                and str(interaction.user.id) == Config.EASTER_EGG_USER_ID
-            ):
-                chosen = question.correct_option
-                bonus = Config.EASTER_EGG_BONUS
-
-            _, is_correct = record_answer(
-                session, user=user, question=question, chosen_letter=chosen
-            )
-            if bonus:
-                user.points += bonus
             session.commit()
 
-            if is_correct:
-                await interaction.response.send_message(
-                    embed=utils.correct_answer_embed(question, question.points, bonus),
-                    ephemeral=True,
-                )
-            else:
-                await interaction.response.send_message(
-                    embed=utils.wrong_answer_embed(question, letter),
-                    ephemeral=True,
-                )
-        except Exception:  # never let a UI click crash silently
+            # Private result to the clicker.
+            await interaction.response.send_message(
+                embed=utils.answer_feedback_embed(question, letter, outcome),
+                ephemeral=True,
+            )
+            # Public extras (level up, badges) + role assignment.
+            await announce_extras(
+                interaction.channel, interaction.user, interaction.guild, outcome
+            )
+        except Exception:
             log.exception("Error handling answer button")
             if not interaction.response.is_done():
                 await interaction.response.send_message(
@@ -107,7 +120,6 @@ class AnswerView(discord.ui.View):
         finally:
             session.close()
 
-    # Each button just forwards its letter to the shared handler.
     @discord.ui.button(label="A", style=discord.ButtonStyle.primary)
     async def btn_a(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._answer(interaction, "A")
@@ -128,7 +140,6 @@ class AnswerView(discord.ui.View):
         """Disable the buttons and reveal the correct answer on the message."""
         for child in self.children:
             child.disabled = True
-
         if self.message is None:
             return
         try:
@@ -142,5 +153,4 @@ class AnswerView(discord.ui.View):
                 embed.color = utils.COLOR_GOLD
             await self.message.edit(embed=embed, view=self)
         except discord.HTTPException:
-            # Message may have been deleted; nothing we can do, and it's harmless.
             pass
