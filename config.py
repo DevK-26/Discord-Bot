@@ -99,6 +99,13 @@ class Config:
     # (requires the Manage Roles permission; silently skipped if missing/blank).
     LEVEL_ROLES: dict[int, str] = _parse_level_roles(os.getenv("LEVEL_ROLES", ""))
 
+    # --- Tier 3: moderation & content management -----------------------------
+    # Global fallback "mod" role name. A member counts as a moderator if they
+    # have Manage Server, OR this role, OR the per-guild admin role (GuildConfig).
+    ADMIN_ROLE_NAME: str = os.getenv("ADMIN_ROLE_NAME", "")
+    # Default page size for paginated lists (leaderboard, resources, questions).
+    PAGE_SIZE: int = int(os.getenv("PAGE_SIZE", "10"))
+
     # --- Easter egg ----------------------------------------------------------
     # If you want one specific user to always get their answer auto-corrected
     # plus bonus aura, put their Discord ID here (as a string). Leave it as an

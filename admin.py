@@ -11,13 +11,15 @@ Usage:
     python admin.py reset       # DROP everything (asks to confirm first!)
 """
 
+import json
+import os
 import sys
 
 from sqlalchemy import func
 
 import achievements as ach
 from config import Config
-from db import Base, engine, init_db, session_scope
+from db import Base, add_question, add_resource, engine, init_db, session_scope
 from models import Answer, Question, Resource, User
 
 
@@ -83,6 +85,78 @@ def cmd_resources() -> None:
             print(f"   #{r.id} [{r.category}] {r.title} — {r.url} (👍 {r.upvotes})")
 
 
+def cmd_import() -> None:
+    """Bulk-load questions or resources from a JSON file (like /export output)."""
+    if len(sys.argv) < 3:
+        print("Usage: python admin.py import <file.json>")
+        return
+    path = sys.argv[2]
+    if not os.path.exists(path):
+        print(f"❌ File not found: {path}")
+        return
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+    if not isinstance(data, list) or not data:
+        print("❌ Expected a non-empty JSON array of objects.")
+        return
+
+    sample = data[0]
+    added = skipped = 0
+    with session_scope() as session:
+        if "correct_option" in sample:
+            for item in data:
+                try:
+                    correct = str(item["correct_option"]).upper()
+                    if correct not in {"A", "B", "C", "D"}:
+                        skipped += 1
+                        continue
+                    if (
+                        session.query(Question)
+                        .filter_by(title=item["title"], category=item["category"])
+                        .first()
+                    ):
+                        skipped += 1
+                        continue
+                    add_question(
+                        session,
+                        title=item["title"],
+                        description=item.get("description", ""),
+                        category=item["category"],
+                        option_a=item["option_a"],
+                        option_b=item["option_b"],
+                        option_c=item["option_c"],
+                        option_d=item["option_d"],
+                        correct_option=correct,
+                        difficulty=item.get("difficulty", "medium"),
+                        points=int(item.get("points", 10)),
+                        explanation=item.get("explanation"),
+                    )
+                    added += 1
+                except (KeyError, ValueError, TypeError):
+                    skipped += 1
+            print(f"🧠 Questions import: {added} added, {skipped} skipped.")
+        elif "url" in sample:
+            for item in data:
+                try:
+                    if session.query(Resource).filter_by(url=item["url"]).first():
+                        skipped += 1
+                        continue
+                    add_resource(
+                        session,
+                        title=item["title"],
+                        url=item["url"],
+                        category=item["category"],
+                        description=item.get("description"),
+                        tags=item.get("tags"),
+                    )
+                    added += 1
+                except (KeyError, ValueError, TypeError):
+                    skipped += 1
+            print(f"📚 Resources import: {added} added, {skipped} skipped.")
+        else:
+            print("❌ Could not detect type (need 'correct_option' or 'url' keys).")
+
+
 def cmd_reset() -> None:
     print("⚠️  This will DROP ALL TABLES and delete every row in:")
     print(f"   {Config.DB_URL}")
@@ -100,6 +174,7 @@ COMMANDS = {
     "stats": cmd_stats,
     "questions": cmd_questions,
     "resources": cmd_resources,
+    "import": cmd_import,
     "reset": cmd_reset,
 }
 

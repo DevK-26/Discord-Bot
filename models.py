@@ -105,6 +105,9 @@ class Question(Base):
     # Exactly one of "A" / "B" / "C" / "D".
     correct_option: Mapped[str] = mapped_column(String(1))
 
+    # Tier 3: optional teaching note shown in answer feedback.
+    explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     points: Mapped[int] = mapped_column(Integer, default=10)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
@@ -155,6 +158,41 @@ class Resource(Base):
 
     added_by: Mapped[str] = mapped_column(String(32), default="system")
     upvotes: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+class ResourceVote(Base):
+    """One upvote by one user on one resource (enforces one vote per user)."""
+
+    __tablename__ = "resource_votes"
+    __table_args__ = (
+        UniqueConstraint("resource_id", "user_id", name="uq_resource_vote"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    resource_id: Mapped[int] = mapped_column(ForeignKey("resources.id"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+class GuildConfig(Base):
+    """Per-server settings so the bot can behave differently in each guild.
+
+    Every field is nullable — a missing value falls back to the global Config.
+    """
+
+    __tablename__ = "guild_configs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    guild_id: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+
+    prefix: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    admin_role_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    daily_channel_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    currency_label: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Raw "1:Novice,5:Adept" string, parsed like the global LEVEL_ROLES.
+    level_roles: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 

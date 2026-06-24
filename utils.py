@@ -159,6 +159,11 @@ def answer_feedback_embed(question, chosen_letter: str, outcome) -> discord.Embe
             inline=False,
         )
 
+    # Teaching note (Tier 3) — especially valuable on a wrong answer.
+    explanation = getattr(question, "explanation", None)
+    if explanation:
+        embed.add_field(name="💡 Explanation", value=explanation, inline=False)
+
     if outcome.counted_daily:
         embed.add_field(
             name="Daily streak", value=f"🔥 {outcome.current_streak} day(s)", inline=True
@@ -303,6 +308,83 @@ def leaderboard_embed(rows: list) -> discord.Embed:
     return embed
 
 
+def _chunk(items: list, size: int) -> list[list]:
+    size = size or Config.PAGE_SIZE
+    return [items[i : i + size] for i in range(0, len(items), size)] or [[]]
+
+
+def leaderboard_embeds(rows: list, per_page: int | None = None) -> list[discord.Embed]:
+    """Paginated leaderboard — a list of purple embeds with global ranks."""
+    per_page = per_page or Config.PAGE_SIZE
+    pages = _chunk(rows, per_page)
+    medals = ["🥇", "🥈", "🥉"]
+    embeds: list[discord.Embed] = []
+    for pi, page in enumerate(pages):
+        embed = discord.Embed(
+            title="🏆 Leaderboard — Top Learners",
+            description=f"Ranked by {Config.CURRENCY_NAME} {Config.CURRENCY_EMOJI}",
+            color=COLOR_PURPLE,
+        )
+        if not page:
+            embed.description = f"No one has earned any {Config.CURRENCY_NAME} yet!"
+        else:
+            lines = []
+            for li, user in enumerate(page):
+                rank = pi * per_page + li
+                marker = medals[rank] if rank < len(medals) else f"`#{rank + 1}`"
+                lines.append(
+                    f"{marker} **{user.username}** — {user.points} {Config.CURRENCY_NAME} "
+                    f"(lvl {user.level}, {user.accuracy:.0f}% acc.)"
+                )
+            embed.add_field(name="Rankings", value="\n".join(lines), inline=False)
+        embed.set_footer(text=FOOTER)
+        embeds.append(embed)
+    return embeds
+
+
+def questions_browse_embeds(rows: list, category: str | None = None) -> list[discord.Embed]:
+    """Paginated question-bank browser."""
+    pages = _chunk(rows, Config.PAGE_SIZE)
+    scope = f" in **{category}**" if category else ""
+    embeds: list[discord.Embed] = []
+    for page in pages:
+        embed = discord.Embed(
+            title="🧠 Question Bank",
+            description=f"{len(rows)} active question(s){scope}.",
+            color=COLOR_BLUE,
+        )
+        for q in page:
+            embed.add_field(
+                name=f"#{q.id} · {q.title}",
+                value=f"`{q.category}` · {q.difficulty.title()} · "
+                f"{scoring.points_for(q.points, q.difficulty)} {Config.CURRENCY_EMOJI}",
+                inline=False,
+            )
+        embed.set_footer(text=FOOTER)
+        embeds.append(embed)
+    return embeds
+
+
+def resources_list_embeds(rows: list, header: str) -> list[discord.Embed]:
+    """Paginated resource list."""
+    pages = _chunk(rows, Config.PAGE_SIZE)
+    embeds: list[discord.Embed] = []
+    for page in pages:
+        embed = discord.Embed(title=f"📚 {header}", color=COLOR_GREEN)
+        for r in page:
+            tags = f" · 🏷️ {r.tags}" if r.tags else ""
+            embed.add_field(
+                name=f"#{r.id} · {r.title}  (👍 {r.upvotes})",
+                value=f"[link]({r.url}) · `{r.category}`{tags}",
+                inline=False,
+            )
+        if not page:
+            embed.description = "Nothing here yet."
+        embed.set_footer(text=FOOTER)
+        embeds.append(embed)
+    return embeds
+
+
 def categories_embed(question_cats: list[str], resource_cats: list[str]) -> discord.Embed:
     """Blue embed listing all distinct question and resource categories."""
     embed = discord.Embed(
@@ -324,6 +406,45 @@ def categories_embed(question_cats: list[str], resource_cats: list[str]) -> disc
     return embed
 
 
+def guild_config_embed(guild, cfg) -> discord.Embed:
+    """Blue embed summarizing a server's overrides vs. the global defaults."""
+    embed = discord.Embed(
+        title=f"⚙️ {guild.name} — {Config.BOT_NAME} Config",
+        description="Blank settings fall back to the bot's global defaults.",
+        color=COLOR_BLUE,
+    )
+
+    def role_str(rid):
+        if not rid:
+            return "_default_"
+        role = guild.get_role(int(rid)) if str(rid).isdigit() else None
+        return role.mention if role else f"id `{rid}`"
+
+    def chan_str(cid):
+        if not cid:
+            return "_default_"
+        chan = guild.get_channel(int(cid)) if str(cid).isdigit() else None
+        return chan.mention if chan else f"id `{cid}`"
+
+    embed.add_field(
+        name="Prefix",
+        value=f"`{cfg.prefix}`" if cfg.prefix else f"`{Config.PREFIX}` (default)",
+        inline=True,
+    )
+    embed.add_field(name="Admin role", value=role_str(cfg.admin_role_id), inline=True)
+    embed.add_field(name="Daily channel", value=chan_str(cfg.daily_channel_id), inline=True)
+    embed.add_field(
+        name="Currency label",
+        value=cfg.currency_label or f"{Config.CURRENCY_NAME} (default)",
+        inline=True,
+    )
+    embed.add_field(
+        name="Level roles", value=f"`{cfg.level_roles}`" if cfg.level_roles else "_default_", inline=False
+    )
+    embed.set_footer(text=FOOTER + "  •  Change with /config <setting> <value>")
+    return embed
+
+
 def help_embed() -> discord.Embed:
     """Blue embed listing every command, grouped by section."""
     p = Config.PREFIX
@@ -342,7 +463,8 @@ def help_embed() -> discord.Embed:
             "`/ask [category]` — get a question with A/B/C/D **buttons** to click\n"
             "`/daily` — your once-a-day challenge (builds a 🔥 streak + bonus)\n"
             "`/answer <id> <A/B/C/D>` — type-based fallback to answer\n"
-            "`/addquestion title | desc | category | A | B | C | D | correct`"
+            "`/questions [category]` — browse the question bank\n"
+            "`/addquestion title | … | correct | [explanation]`"
         ),
         inline=False,
     )
@@ -350,6 +472,8 @@ def help_embed() -> discord.Embed:
         name="📚 Resources",
         value=(
             "`/resource [category]` — get a random resource\n"
+            "`/resources [category] [tag] [sort]` — browse & search\n"
+            "`/upvote <id>` — upvote a resource (one per user)\n"
             "`/addresource title | url | category | [description]`"
         ),
         inline=False,
@@ -359,8 +483,17 @@ def help_embed() -> discord.Embed:
         value=(
             "`/profile [@user]` — level, streak, accuracy & badges\n"
             f"`/{Config.CURRENCY_NAME.lower()} [@user]` — quick {Config.CURRENCY_NAME} readout\n"
-            "`/leaderboard` — top 10 learners\n"
+            "`/leaderboard` — top learners (paginated)\n"
             "`/categories` — list all categories"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="🛠️ Mods only",
+        value=(
+            "`/editquestion`, `/deletequestion`, `/editresource`, `/deleteresource`\n"
+            "`/config [setting] [value]` — per-server settings\n"
+            "`/export <questions|resources>` — download JSON"
         ),
         inline=False,
     )
