@@ -28,6 +28,7 @@ SAMPLE_QUESTIONS = [
         "option_d": "O(1)",
         "correct_option": "B",
         "points": 10,
+        "explanation": "Each step halves the search space, so it takes at most log₂(n) comparisons.",
     },
     {
         "title": "Stack vs Queue",
@@ -40,6 +41,7 @@ SAMPLE_QUESTIONS = [
         "option_d": "Binary tree",
         "correct_option": "B",
         "points": 10,
+        "explanation": "A queue is FIFO (like a line); a stack is LIFO (last in, first out).",
     },
     {
         "title": "Hash map average lookup",

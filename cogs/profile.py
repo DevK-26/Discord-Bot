@@ -18,6 +18,7 @@ import utils
 from config import Config
 from db import get_or_create_user, get_session
 from models import User
+from pagination import Paginator
 
 log = logging.getLogger("codesensei.profile")
 
@@ -77,20 +78,28 @@ class Profile(commands.Cog):
     @commands.hybrid_command(
         name="leaderboard",
         aliases=["lb", "top"],
-        description="Show the top 10 learners by points.",
+        description="Show the top learners by points (paginated).",
     )
     async def leaderboard(self, ctx: commands.Context) -> None:
         session = get_session()
         try:
             rows = (
                 session.query(User)
+                .filter(User.points > 0)
                 .order_by(User.points.desc(), User.correct_answers.desc())
-                .limit(10)
+                .limit(50)
                 .all()
             )
-            await ctx.send(embed=utils.leaderboard_embed(rows))
         finally:
             session.close()
+
+        embeds = utils.leaderboard_embeds(rows)
+        if len(embeds) == 1:
+            await ctx.send(embed=embeds[0])
+            return
+        view = Paginator(embeds, ctx.author.id)
+        message = await ctx.send(embed=embeds[0], view=view)
+        view.message = message
 
 
 async def setup(bot: commands.Bot) -> None:

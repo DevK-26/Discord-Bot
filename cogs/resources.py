@@ -18,7 +18,8 @@ import achievements as ach
 import services
 import utils
 from db import add_resource, get_or_create_user, get_session
-from models import Resource
+from models import Resource, ResourceVote
+from pagination import Paginator
 from views import announce_extras
 
 log = logging.getLogger("codesensei.resources")
@@ -72,6 +73,116 @@ class Resources(commands.Cog):
                 )
                 return
             await ctx.send(embed=utils.resource_embed(item))
+        finally:
+            session.close()
+
+    @commands.hybrid_command(
+        name="resources",
+        description="Browse resources by category/tag, sorted by top or new.",
+    )
+    @app_commands.describe(
+        category="Filter by category", tag="Filter by tag", sort="top (most upvoted) or new"
+    )
+    @app_commands.autocomplete(category=resource_category_autocomplete)
+    @app_commands.choices(
+        sort=[
+            app_commands.Choice(name="Top (most upvoted)", value="top"),
+            app_commands.Choice(name="Newest", value="new"),
+        ]
+    )
+    async def resources(
+        self,
+        ctx: commands.Context,
+        category: str | None = None,
+        tag: str | None = None,
+        sort: str = "top",
+    ) -> None:
+        session = get_session()
+        try:
+            query = session.query(Resource)
+            if category:
+                query = query.filter(func.lower(Resource.category) == category.lower())
+            if tag:
+                # tags is a comma-separated string; case-insensitive substring match.
+                query = query.filter(func.lower(Resource.tags).like(f"%{tag.lower()}%"))
+            if sort == "new":
+                query = query.order_by(Resource.created_at.desc(), Resource.id.desc())
+            else:
+                query = query.order_by(Resource.upvotes.desc(), Resource.id.asc())
+            rows = query.all()
+        finally:
+            session.close()
+
+        if not rows:
+            await ctx.send(
+                embed=utils.simple_embed(
+                    "📭 No matching resources",
+                    "Try a different category/tag, or add one with `/addresource`.",
+                    utils.COLOR_RED,
+                ),
+                ephemeral=True,
+            )
+            return
+
+        header = "Resources"
+        if category:
+            header += f" · {category}"
+        if tag:
+            header += f" · #{tag}"
+        header += " · Newest" if sort == "new" else " · Top"
+
+        embeds = utils.resources_list_embeds(rows, header)
+        if len(embeds) == 1:
+            await ctx.send(embed=embeds[0])
+            return
+        view = Paginator(embeds, ctx.author.id)
+        message = await ctx.send(embed=embeds[0], view=view)
+        view.message = message
+
+    @commands.hybrid_command(
+        name="upvote", description="Upvote a resource (one vote per user)."
+    )
+    @app_commands.describe(resource_id="The resource number to upvote")
+    async def upvote(self, ctx: commands.Context, resource_id: int) -> None:
+        session = get_session()
+        try:
+            res = session.get(Resource, resource_id)
+            if res is None:
+                await ctx.send(
+                    embed=utils.simple_embed(
+                        "🔍 Not found",
+                        f"There's no resource #{resource_id}. Browse with `/resources`.",
+                        utils.COLOR_RED,
+                    ),
+                    ephemeral=True,
+                )
+                return
+            user = get_or_create_user(session, ctx.author.id, ctx.author.display_name)
+            existing = (
+                session.query(ResourceVote)
+                .filter_by(resource_id=res.id, user_id=user.id)
+                .first()
+            )
+            if existing is not None:
+                await ctx.send(
+                    embed=utils.simple_embed(
+                        "🗳️ Already voted",
+                        f"You've already upvoted **{res.title}**.",
+                        utils.COLOR_GOLD,
+                    ),
+                    ephemeral=True,
+                )
+                return
+            session.add(ResourceVote(resource_id=res.id, user_id=user.id))
+            res.upvotes = (res.upvotes or 0) + 1
+            session.commit()
+            await ctx.send(
+                embed=utils.simple_embed(
+                    "👍 Upvoted!",
+                    f"**{res.title}** now has **{res.upvotes}** upvote(s). Thanks!",
+                    utils.COLOR_GREEN,
+                )
+            )
         finally:
             session.close()
 

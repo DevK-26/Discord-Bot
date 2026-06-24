@@ -20,6 +20,7 @@ from logging.handlers import RotatingFileHandler
 import discord
 from discord.ext import commands
 
+import db
 from config import Config
 
 log = logging.getLogger("codesensei")
@@ -30,8 +31,15 @@ INITIAL_COGS = (
     "cogs.quiz",
     "cogs.resources",
     "cogs.profile",
+    "cogs.moderation",
     "cogs.admin",
 )
+
+
+def _get_prefix(bot: commands.Bot, message: discord.Message):
+    """Per-guild command prefix (Tier 3) — also responds to @mentions."""
+    guild_id = message.guild.id if message.guild else None
+    return commands.when_mentioned_or(db.resolve_prefix(guild_id))(bot, message)
 
 
 def setup_logging() -> None:
@@ -71,7 +79,7 @@ class CodeSensei(commands.Bot):
         intents.message_content = True
         intents.members = True
         super().__init__(
-            command_prefix=Config.PREFIX,
+            command_prefix=_get_prefix,  # per-guild prefix + @mention
             intents=intents,
             help_command=None,  # we ship our own /help
             case_insensitive=True,

@@ -53,6 +53,8 @@ MIGRATIONS: list[tuple[str, str, str]] = [
     ("users", "current_streak", "INTEGER DEFAULT 0"),
     ("users", "longest_streak", "INTEGER DEFAULT 0"),
     ("users", "last_daily_date", "DATE"),
+    # Tier 3: optional explanation shown in answer feedback.
+    ("questions", "explanation", "TEXT"),
 ]
 
 

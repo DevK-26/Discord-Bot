@@ -9,6 +9,19 @@ discover hand-picked developer resources — all wrapped in clean, colorful embe
 
 ---
 
+## 🆕 What's new (Tier 3 — content management & moderation)
+
+- 🛠️ **Edit & delete (mod-only)** — `/editquestion`, `/deletequestion` (soft-delete, keeps history), `/editresource`, `/deleteresource`. Gated by a centralized mod check (Manage Server, a global mod role, or a per-guild admin role).
+- 💡 **Question explanations** — optional teaching note shown in answer feedback; `/addquestion` takes an optional 9th `| explanation` field.
+- 👍 **Upvoting, sorting & tag search** — `/upvote` (one vote per user via a `ResourceVote` table) and `/resources [category] [tag] [top|new]`.
+- 📄 **Pagination** — reusable ◀/▶ paginator powers the leaderboard, `/resources`, and a new `/questions` browser.
+- 📦 **Import / export** — `/export <questions|resources>` returns a JSON file; `python admin.py import <file.json>` bulk-loads with validation and a skipped/added summary.
+- ⚙️ **Per-guild config** — a `GuildConfig` table + `/config` (mod-only) for prefix, admin role, daily channel, currency label, and level-role thresholds. The command prefix is now per-server.
+
+> **Upgrading?** Run `python migrate.py` — it adds the `explanation` column and the `resource_votes` / `guild_configs` tables without touching your data.
+
+---
+
 ## 🆕 What's new (Tier 2 — engagement loop)
 
 - 🗓️ **Daily challenge + streaks** — `/daily` gives one fresh question per UTC day; answering builds a 🔥 streak with a scaling, capped bonus (`+5`/day up to `+50`).
@@ -121,12 +134,20 @@ Every command works as a **slash command** (`/ask`) *or* with the `!` prefix (`!
 | `/daily` | – | Your once-a-day challenge — builds a 🔥 streak and pays a scaling bonus. |
 | `/answer` | `<id> <A/B/C/D>` | Text fallback for the buttons; ephemeral result. |
 | `/addquestion` | `title \| desc \| category \| A \| B \| C \| D \| correct` | Add a question (8 `\|`-separated fields). |
+| `/addquestion` | `title \| … \| correct \| [explanation]` | Add a question (optional 9th explanation field). |
+| `/questions` | `[category]` | Browse the question bank (paginated). |
 | `/resource` | `[category]` | Random resource, optionally by category (autocomplete). |
+| `/resources` | `[category] [tag] [sort]` | Browse/search resources, sorted by top or new (paginated). |
+| `/upvote` | `<id>` | Upvote a resource (one vote per user). |
 | `/addresource` | `title \| url \| category \| [description]` | Add a resource. |
-| `/profile` | `[@user]` | Full profile embed with avatar. |
+| `/profile` | `[@user]` | Level, streak, accuracy & badges. |
 | `/aura` | `[@user]` | Quick one-line aura readout. |
-| `/leaderboard` | – | Top 10 by aura. |
+| `/leaderboard` | – | Top learners by aura (paginated). |
 | `/categories` | – | All quiz + resource categories. |
+| `/editquestion` `/deletequestion` | `<id> …` | *(Mod)* Edit a field / soft-delete a question. |
+| `/editresource` `/deleteresource` | `<id> …` | *(Mod)* Edit a field / delete a resource. |
+| `/config` | `[setting] [value]` | *(Mod)* View or change per-server settings. |
+| `/export` | `<questions\|resources>` | *(Mod)* Download content as JSON. |
 | `!sync` | – | *(Owner only, prefix only)* Manually re-sync slash commands. |
 
 **Answering:** run `/ask`, then click **A / B / C / D** under the question. Your ✅/❌ result is
@@ -156,13 +177,15 @@ codesensei/
 ├── services.py      # process_answer — the single answer/scoring path
 ├── achievements.py  # badge catalog + granting logic
 ├── roles.py         # optional level → Discord role auto-assignment
+├── permissions.py   # centralized is_mod / mod_only check
+├── pagination.py    # reusable ◀/▶ paginated-embed view
 ├── utils.py         # embed builders + quiz helpers
 ├── views.py         # AnswerView (the A/B/C/D buttons)
 ├── seed.py          # sample questions + resources + achievement sync
 ├── migrate.py       # non-destructive DB migrations
-├── admin.py         # offline CLI (init/stats/reset)
-├── cogs/            # quiz, resources, profile, admin, events
-└── tests/           # pytest suite for pure logic (scoring, streaks, levels)
+├── admin.py         # offline CLI (init/stats/import/reset)
+├── cogs/            # quiz, resources, profile, moderation, admin, events
+└── tests/           # pytest suite for pure logic (scoring, streaks, levels, helpers)
 ```
 
 ---
@@ -172,9 +195,11 @@ codesensei/
 | Model | Key fields |
 |---|---|
 | **User** | `discord_id` (unique), `username`, `points`, `correct_answers`, `total_answers`, `current_streak`, `longest_streak`, `last_daily_date`, `created_at` → **answers**, **achievements** |
-| **Question** | `title`, `description`, `category`, `difficulty`, `option_a/b/c/d`, `correct_option` (A/B/C/D), `points` (flat base), `is_active`, `asked_by`, `created_at` → **answers** |
+| **Question** | `title`, `description`, `category`, `difficulty`, `option_a/b/c/d`, `correct_option` (A/B/C/D), `explanation?`, `points` (flat base), `is_active`, `asked_by`, `created_at` → **answers** |
 | **Answer** | `question_id` (FK), `user_id` (FK), `answer_text`, `is_correct`, `points_awarded`, `created_at` |
 | **Resource** | `title`, `url`, `category`, `description?`, `tags?` (CSV), `added_by`, `upvotes`, `created_at` |
+| **ResourceVote** | `resource_id` (FK), `user_id` (FK), `created_at` — unique per pair (one vote/user) |
+| **GuildConfig** | `guild_id` (unique), `prefix?`, `admin_role_id?`, `daily_channel_id?`, `currency_label?`, `level_roles?` |
 | **Achievement** | `key` (unique), `name`, `emoji`, `description` → **holders** |
 | **UserAchievement** | `user_id` (FK), `achievement_id` (FK), `earned_at` — unique per pair |
 
@@ -190,11 +215,12 @@ codesensei/
 ## 🧪 Admin CLI
 
 ```bash
-python admin.py init        # create tables
-python admin.py stats       # counts + top users
-python admin.py questions   # list questions
-python admin.py resources   # list resources
-python admin.py reset       # DROP everything (asks to confirm)
+python admin.py init           # create tables + sync achievements
+python admin.py stats          # counts + top users
+python admin.py questions      # list questions
+python admin.py resources      # list resources
+python admin.py import f.json  # bulk-load questions/resources from a /export file
+python admin.py reset          # DROP everything (asks to confirm)
 ```
 
 ---

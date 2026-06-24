@@ -117,6 +117,7 @@ def add_question(
     correct_option: str,
     difficulty: str = "medium",
     points: int = 10,
+    explanation: str | None = None,
     asked_by: str = "system",
 ):
     """Insert a new Question and return it (not yet committed)."""
@@ -133,6 +134,7 @@ def add_question(
         correct_option=correct_option.upper(),
         difficulty=difficulty,
         points=points,
+        explanation=explanation,
         asked_by=asked_by,
     )
     session.add(question)
@@ -164,6 +166,55 @@ def add_resource(
     session.add(resource)
     session.flush()
     return resource
+
+
+def get_guild_config(session: Session, guild_id):
+    """Return the GuildConfig row for a guild, or None if it has no overrides."""
+    from models import GuildConfig
+
+    if guild_id is None:
+        return None
+    return session.query(GuildConfig).filter_by(guild_id=str(guild_id)).first()
+
+
+def get_or_create_guild_config(session: Session, guild_id):
+    """Fetch or create the GuildConfig row for a guild (flushed, not committed)."""
+    from models import GuildConfig
+
+    cfg = session.query(GuildConfig).filter_by(guild_id=str(guild_id)).first()
+    if cfg is None:
+        cfg = GuildConfig(guild_id=str(guild_id))
+        session.add(cfg)
+        session.flush()
+    return cfg
+
+
+# Small cache so we don't hit the DB for the command prefix on every message.
+# /config invalidates it via invalidate_prefix_cache when the prefix changes.
+_prefix_cache: dict[str, str | None] = {}
+
+
+def resolve_prefix(guild_id) -> str:
+    """Return the effective command prefix for a guild (cached)."""
+    if guild_id is None:
+        return Config.PREFIX
+    gid = str(guild_id)
+    if gid not in _prefix_cache:
+        session = get_session()
+        try:
+            cfg = get_guild_config(session, gid)
+            _prefix_cache[gid] = cfg.prefix if cfg else None
+        finally:
+            session.close()
+    return _prefix_cache[gid] or Config.PREFIX
+
+
+def invalidate_prefix_cache(guild_id=None) -> None:
+    """Drop cached prefixes (all, or just one guild) after a /config change."""
+    if guild_id is None:
+        _prefix_cache.clear()
+    else:
+        _prefix_cache.pop(str(guild_id), None)
 
 
 # Note: scoring an answer (points, streaks, achievements) lives in

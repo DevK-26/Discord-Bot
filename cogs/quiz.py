@@ -20,6 +20,7 @@ import utils
 from config import Config
 from db import add_question, get_or_create_user, get_session
 from models import Answer, Question
+from pagination import Paginator
 from views import AnswerView, announce_extras, _is_easter_egg
 
 log = logging.getLogger("codesensei.quiz")
@@ -184,26 +185,28 @@ class Quiz(commands.Cog):
 
     @commands.hybrid_command(
         name="addquestion",
-        description="Add a question: title | desc | category | A | B | C | D | correct",
+        description="Add a question: title | desc | category | A | B | C | D | correct | [explanation]",
     )
     @app_commands.describe(
-        payload="Eight | -separated fields ending in the correct letter (A/B/C/D)"
+        payload="8 | -separated fields ending in the correct letter, plus an optional 9th explanation"
     )
     async def addquestion(self, ctx: commands.Context, *, payload: str) -> None:
         parts = [p.strip() for p in payload.split("|")]
-        if len(parts) != 8:
+        # 8 fields required; an optional 9th field is the explanation.
+        if len(parts) not in (8, 9):
             await ctx.send(
                 embed=utils.simple_embed(
                     "✋ Wrong format",
-                    "Use exactly 8 `|`-separated fields:\n"
-                    "`/addquestion title | desc | category | A | B | C | D | correct`",
+                    "Use 8 `|`-separated fields (with an optional 9th explanation):\n"
+                    "`/addquestion title | desc | category | A | B | C | D | correct | [explanation]`",
                     utils.COLOR_RED,
                 ),
                 ephemeral=True,
             )
             return
 
-        title, desc, category, opt_a, opt_b, opt_c, opt_d, correct = parts
+        title, desc, category, opt_a, opt_b, opt_c, opt_d, correct = parts[:8]
+        explanation = parts[8] if len(parts) == 9 and parts[8] else None
         correct = correct.upper()
         if correct not in {"A", "B", "C", "D"}:
             await ctx.send(
@@ -228,6 +231,7 @@ class Quiz(commands.Cog):
                 option_c=opt_c,
                 option_d=opt_d,
                 correct_option=correct,
+                explanation=explanation,
                 asked_by=str(ctx.author.id),
             )
             # Adding content can unlock the "Contributor" badge.
@@ -277,6 +281,40 @@ class Quiz(commands.Cog):
             await ctx.send(embed=utils.categories_embed(q_cats, r_cats))
         finally:
             session.close()
+
+    @commands.hybrid_command(
+        name="questions", description="Browse the question bank (paginated)."
+    )
+    @app_commands.describe(category="Optional category to filter by")
+    @app_commands.autocomplete(category=question_category_autocomplete)
+    async def questions(self, ctx: commands.Context, category: str | None = None) -> None:
+        session = get_session()
+        try:
+            from sqlalchemy import func as _func
+
+            query = session.query(Question).filter(Question.is_active.is_(True))
+            if category:
+                query = query.filter(
+                    _func.lower(Question.category) == category.lower()
+                )
+            rows = query.order_by(Question.id).all()
+        finally:
+            session.close()
+
+        if not rows:
+            await ctx.send(
+                embed=utils.simple_embed(
+                    "📭 No questions", "Nothing to browse yet. Add some with `/addquestion`!",
+                    utils.COLOR_RED,
+                ),
+                ephemeral=True,
+            )
+            return
+
+        embeds = utils.questions_browse_embeds(rows, category)
+        view = Paginator(embeds, ctx.author.id)
+        message = await ctx.send(embed=embeds[0], view=view)
+        view.message = message
 
 
 async def setup(bot: commands.Bot) -> None:

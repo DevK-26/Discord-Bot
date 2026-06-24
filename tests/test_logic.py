@@ -118,3 +118,41 @@ def test_next_streak_gap_resets():
 )
 def test_streak_bonus_scales_and_caps(streak, bonus):
     assert scoring.streak_bonus(streak) == bonus
+
+
+# --- Tier 3: pagination, config parsing, helpers ---------------------------
+
+from config import _parse_level_roles  # noqa: E402
+from pagination import paginate  # noqa: E402
+from cogs.moderation import _extract_id  # noqa: E402
+
+
+def test_paginate_chunks_evenly():
+    pages = paginate(list(range(25)), per_page=10)
+    assert [len(p) for p in pages] == [10, 10, 5]
+
+
+def test_paginate_empty_returns_one_empty_page():
+    assert paginate([], per_page=10) == [[]]
+
+
+@pytest.mark.parametrize("frac,filled", [(0.0, 0), (0.5, 5), (1.0, 10), (2.0, 10), (-1.0, 0)])
+def test_progress_bar_fill(frac, filled):
+    bar = utils.progress_bar(frac, slots=10)
+    assert bar.count("▰") == filled
+    assert len(bar) == 10
+
+
+def test_parse_level_roles():
+    assert _parse_level_roles("1:Novice, 5:Adept ,bad,10:Sensei") == {
+        1: "Novice", 5: "Adept", 10: "Sensei"
+    }
+    assert _parse_level_roles("") == {}
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [("<@&123>", "123"), ("<#456>", "456"), ("789", "789"), ("", None), (None, None), ("none", None)],
+)
+def test_extract_id(raw, expected):
+    assert _extract_id(raw) == expected
